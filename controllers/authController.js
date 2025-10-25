@@ -59,6 +59,46 @@ exports.login = async (req, res) => {
   }
 };
 
+exports.adminLogin = async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Check if user exists
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Check if user is admin
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+    }
+
+    // Check password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Create and sign the JWT token
+    const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, {
+      expiresIn: '1d', // Token expires in 1 day
+    });
+
+    // Return token and user info
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    
+    res.json({
+      token,
+      user: userResponse
+    });
+  } catch (err) {
+    console.error('Admin login error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.logout = (req, res) => {
   // JWT is stateless, so the client needs to remove the token.
   // This endpoint is mainly for compatibility and future extensions.

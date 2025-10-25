@@ -9,6 +9,8 @@ const stockRoutes = require('./stockRoutes');
 const supplyRoutes = require('./supplyRoutes');
 const saleRoutes = require('./saleRoutes');
 const authRoutes = require('./authRoutes');
+const categoryRoutes = require('./category');
+const unitRoutes = require('./unit');
 
 // Register all routes
 router.use('/auth', authRoutes);
@@ -18,6 +20,8 @@ router.use(itemRoutes);
 router.use(stockRoutes);
 router.use(supplyRoutes);
 router.use(saleRoutes);
+router.use(categoryRoutes);
+router.use(unitRoutes);
 
 // Export the router
 module.exports = router;

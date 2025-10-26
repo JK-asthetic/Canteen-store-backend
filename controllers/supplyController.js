@@ -396,7 +396,14 @@ exports.getSupplies = async (req, res) => {
     // For each supply, get its items
     const suppliesWithItems = await Promise.all(supplies.map(async (supply) => {
       const items = await SupplyItem.find({ supply_id: supply._id })
-        .populate('item_id', 'name category unit');
+        .populate({
+    path: 'item_id',
+    select: 'name category unit',
+    populate: [
+      { path: 'category', select: 'name' },
+      { path: 'unit', select: 'name abbreviation' }
+    ]
+  });
       
       return {
         ...supply.toObject(),
@@ -435,7 +442,14 @@ exports.getSupplyById = async (req, res) => {
     
     // Get supply items
     const items = await SupplyItem.find({ supply_id: supply._id })
-      .populate('item_id', 'name category unit');
+      .populate({
+    path: 'item_id',
+    select: 'name category unit',
+    populate: [
+      { path: 'category', select: 'name' },
+      { path: 'unit', select: 'name abbreviation' }
+    ]
+  });
     
     const result = {
       ...supply.toObject(),
@@ -466,7 +480,14 @@ exports.getSuppliesFromCanteen = async (req, res) => {
     // For each supply, get its items
     const suppliesWithItems = await Promise.all(supplies.map(async (supply) => {
       const items = await SupplyItem.find({ supply_id: supply._id })
-        .populate('item_id', 'name category unit');
+.populate({
+    path: 'item_id',
+    select: 'name category unit',
+    populate: [
+      { path: 'category', select: 'name' },
+      { path: 'unit', select: 'name abbreviation' }
+    ]
+  });
       
       return {
         ...supply.toObject(),
@@ -498,7 +519,14 @@ exports.getSuppliesToCanteen = async (req, res) => {
     // For each supply, get its items
     const suppliesWithItems = await Promise.all(supplies.map(async (supply) => {
       const items = await SupplyItem.find({ supply_id: supply._id })
-        .populate('item_id', 'name category unit');
+.populate({
+    path: 'item_id',
+    select: 'name category unit',
+    populate: [
+      { path: 'category', select: 'name' },
+      { path: 'unit', select: 'name abbreviation' }
+    ]
+  });
       
       return {
         ...supply.toObject(),

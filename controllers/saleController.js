@@ -1,8 +1,11 @@
-
 const Sale = require('../models/Sale');
 const SaleItem = require('../models/SaleItem');
 const Stock = require('../models/Stock');
 const StockHistory = require('../models/StockHistory');
+const Item = require('../models/Item');
+
+// Special category ID that increases stock instead of decreasing
+const SPECIAL_CATEGORY_ID = '68fd9f0be8e2ff65f8459ffa';
 
 exports.createSale = async (req, res) => {
   try {
@@ -63,6 +66,16 @@ exports.createSale = async (req, res) => {
 
     // Update or create sale items
     for (const item of items) {
+      // Fetch item details to check category
+      const itemDetails = await Item.findById(item.item_id);
+      if (!itemDetails) {
+        return res.status(400).json({
+          error: `Item ${item.item_id} not found`
+        });
+      }
+
+      const isSpecialCategory = itemDetails.category && itemDetails.category.toString() === SPECIAL_CATEGORY_ID;
+
       let saleItem = await SaleItem.findOne({
         sale_id: sale._id,
         item_id: item.item_id
@@ -74,7 +87,14 @@ exports.createSale = async (req, res) => {
         item_id: item.item_id
       });
 
-      if (!stock || stock.quantity < item.quantity) {
+      if (!stock) {
+        return res.status(400).json({
+          error: `Stock not found for item ${item.item_id}`
+        });
+      }
+
+      // For normal items, check if sufficient stock exists
+      if (!isSpecialCategory && stock.quantity < item.quantity) {
         return res.status(400).json({
           error: `Insufficient stock for item ${item.item_id}`
         });
@@ -100,8 +120,12 @@ exports.createSale = async (req, res) => {
       await saleItem.save();
       saleItems.push(saleItem);
 
-      // Update stock
-      stock.quantity -= quantityDiff;
+      // Update stock - INCREASE for special category, DECREASE for normal items
+      if (isSpecialCategory) {
+        stock.quantity += quantityDiff;
+      } else {
+        stock.quantity -= quantityDiff;
+      }
       stock.updated_at = new Date();
       await stock.save();
 
@@ -118,11 +142,15 @@ exports.createSale = async (req, res) => {
         stockHistory.updated_at = new Date();
         await stockHistory.save();
       } else {
+        const openingStock = isSpecialCategory 
+          ? stock.quantity - quantityDiff 
+          : stock.quantity + quantityDiff;
+        
         stockHistory = new StockHistory({
           canteen_id,
           item_id: item.item_id,
           date: today,
-          opening_stock: stock.quantity + quantityDiff,
+          opening_stock: openingStock,
           sold_stock: quantityDiff,
           closing_stock: stock.quantity,
           created_at: new Date()
@@ -148,14 +176,19 @@ exports.updateSale = async (req, res) => {
     const { saleId } = req.params;
     const { items, cash_amount, online_amount } = req.body;
 
+    console.log('UpdateSale - Starting update for sale:', saleId);
+    console.log('UpdateSale - Items received:', JSON.stringify(items, null, 2));
+
     // Find the sale
     const sale = await Sale.findById(saleId);
     if (!sale) {
       return res.status(404).json({ error: 'Sale not found' });
     }
 
+    console.log('UpdateSale - Sale found:', sale._id);
+
     // Validate permissions
-    if (req.user.role === 'manager' && req.user.canteen_id.toString() !== sale.canteen_id.toString()) {
+    if (req.user.role === 'manager' && req.user.canteen_id && sale.canteen_id && req.user.canteen_id.toString() !== sale.canteen_id.toString()) {
       return res.status(403).json({ error: 'You can only edit sales from your canteen' });
     }
 
@@ -198,6 +231,17 @@ exports.updateSale = async (req, res) => {
 
     // Process each item in the request
     for (const item of items) {
+      // Fetch item details to check category
+      const itemDetails = await Item.findById(item.item_id);
+      if (!itemDetails) {
+        return res.status(400).json({
+          error: `Item ${item.item_id} not found`
+        });
+      }
+      console.log('UpdateSale - Processing item:', itemDetails.category);
+
+      const isSpecialCategory = itemDetails.category ? itemDetails.category.toString() === SPECIAL_CATEGORY_ID : false;
+
       let saleItem = existingItems.find(i => i.item_id.toString() === item.item_id);
       const stock = await Stock.findOne({
         canteen_id: sale.canteen_id,
@@ -212,12 +256,16 @@ exports.updateSale = async (req, res) => {
 
       // Calculate available stock considering existing sale quantities
       const originalQuantity = saleItem ? saleItem.quantity : 0;
-      const availableStock = stock.quantity + originalQuantity;
-
-      if (item.quantity > availableStock) {
-        return res.status(400).json({
-          error: `Insufficient stock for item ${item.item_id}. Available: ${availableStock}`
-        });
+      
+      // For special category, we don't need to check stock availability
+      // For normal items, check if sufficient stock is available
+      if (!isSpecialCategory) {
+        const availableStock = stock.quantity + originalQuantity;
+        if (item.quantity > availableStock) {
+          return res.status(400).json({
+            error: `Insufficient stock for item ${item.item_id}. Available: ${availableStock}`
+          });
+        }
       }
 
       // Calculate quantity difference
@@ -240,32 +288,41 @@ exports.updateSale = async (req, res) => {
       await saleItem.save();
       saleItems.push(saleItem);
 
-      // Update stock
-      stock.quantity -= quantityDiff;
+      // Update stock - INCREASE for special category, DECREASE for normal items
+      if (isSpecialCategory) {
+        stock.quantity += quantityDiff;
+      } else {
+        stock.quantity -= quantityDiff;
+      }
       stock.updated_at = new Date();
       await stock.save();
 
       // Update stock history
-      const today = new Date(sale.date);
-      today.setHours(0, 0, 0, 0);
+      const historyDate = new Date(sale.date);
+      historyDate.setHours(0, 0, 0, 0);
 
       let stockHistory = await StockHistory.findOne({
         canteen_id: sale.canteen_id,
         item_id: item.item_id,
-        date: today
+        date: historyDate
       });
 
       if (stockHistory) {
+        // For special category, adjust sold_stock differently
         stockHistory.sold_stock += quantityDiff;
         stockHistory.closing_stock = stock.quantity;
         stockHistory.updated_at = new Date();
         await stockHistory.save();
       } else {
+        const openingStock = isSpecialCategory 
+          ? stock.quantity - quantityDiff 
+          : stock.quantity + quantityDiff;
+        
         stockHistory = new StockHistory({
           canteen_id: sale.canteen_id,
           item_id: item.item_id,
-          date: today,
-          opening_stock: stock.quantity + quantityDiff,
+          date: historyDate,
+          opening_stock: openingStock,
           sold_stock: quantityDiff,
           closing_stock: stock.quantity,
           created_at: new Date()
@@ -276,24 +333,38 @@ exports.updateSale = async (req, res) => {
 
     // Remove items not in the updated list
     for (const existingItem of existingItems) {
-      if (!items.find(i => i.item_id === existingItem.item_id.toString())) {
+      const itemIdStr = existingItem.item_id ? existingItem.item_id.toString() : null;
+      if (!itemIdStr || !items.find(i => i.item_id === itemIdStr)) {
+        console.log('UpdateSale - Removing item:', itemIdStr);
+        
+        // Fetch item details to check category
+        const itemDetails = await Item.findById(existingItem.item_id);
+        const isSpecialCategory = itemDetails && itemDetails.category ? itemDetails.category.toString() === SPECIAL_CATEGORY_ID : false;
+        
+        console.log('UpdateSale - Item to remove is special category:', isSpecialCategory);
+
         const stock = await Stock.findOne({
           canteen_id: sale.canteen_id,
           item_id: existingItem.item_id
         });
 
         if (stock) {
-          stock.quantity += existingItem.quantity;
+          // Reverse the stock change - DECREASE for special category, INCREASE for normal items
+          if (isSpecialCategory) {
+            stock.quantity -= existingItem.quantity;
+          } else {
+            stock.quantity += existingItem.quantity;
+          }
           stock.updated_at = new Date();
           await stock.save();
 
-          const today = new Date(sale.date);
-          today.setHours(0, 0, 0, 0);
+          const historyDate = new Date(sale.date);
+          historyDate.setHours(0, 0, 0, 0);
 
           let stockHistory = await StockHistory.findOne({
             canteen_id: sale.canteen_id,
             item_id: existingItem.item_id,
-            date: today
+            date: historyDate
           });
 
           if (stockHistory) {
@@ -305,7 +376,7 @@ exports.updateSale = async (req, res) => {
             stockHistory = new StockHistory({
               canteen_id: sale.canteen_id,
               item_id: existingItem.item_id,
-              date: today,
+              date: historyDate,
               opening_stock: stock.quantity,
               sold_stock: 0,
               closing_stock: stock.quantity,
@@ -482,7 +553,6 @@ exports.getSalesByDateAndCanteen = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 exports.getSalesByDateRange = async (req, res) => {
   try {

@@ -64,7 +64,13 @@ exports.updateStock = async (req, res) => {
     await stockHistory.save();
 
     // Return stock with populated item data
-    const populatedStock = await Stock.findById(stock._id).populate('item_id');
+    const populatedStock = await Stock.findById(stock._id).populate({
+    path: 'item_id',
+    populate: [
+      { path: 'category', select: 'name' },
+      { path: 'unit', select: 'name abbreviation' }
+    ]
+  });
     
     res.status(200).json(populatedStock);
   } catch (err) {
@@ -78,8 +84,14 @@ exports.getStockByCanteen = async (req, res) => {
     const { canteen_id } = req.params;
     
     const stocks = await Stock.find({ canteen_id })
-      .populate('item_id')
-      .populate('canteen_id', 'name location');
+      .populate({
+    path: 'item_id',
+    populate: [
+      { path: 'category', select: 'name' },
+      { path: 'unit', select: 'name abbreviation' }
+    ]
+  })
+  .populate('canteen_id', 'name location type');
       
     res.json(stocks);
   } catch (err) {
@@ -103,7 +115,13 @@ exports.getStockHistory = async (req, res) => {
     if (item_id) filter.item_id = item_id;
     
     const history = await StockHistory.find(filter)
-      .populate('item_id', 'name unit')
+      .populate({
+  path: 'item_id',
+  select: 'name',
+  populate: [
+    { path: 'unit', select: 'name abbreviation' }
+  ]
+})
       .sort({ date: 1 });
       
     res.json(history);

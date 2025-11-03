@@ -34,14 +34,3 @@ const autoUnlockJob = cron.schedule('0 0 * * *', async () => {
 });
 
 module.exports = autoUnlockJob;
-
-// In your main app.js or server.js file, add:
-/*
-const autoUnlockJob = require('./jobs/autoUnlockJob');
-
-// Start the cron job when the server starts
-autoUnlockJob.start();
-
-// To stop the job (if needed)
-// autoUnlockJob.stop();
-*/

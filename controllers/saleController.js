@@ -9,7 +9,14 @@ const SPECIAL_CATEGORY_ID = "68fd9f0be8e2ff65f8459ffa";
 
 exports.createSale = async (req, res) => {
   try {
-    const { canteen_id, items, cash_amount, online_amount } = req.body;
+    const {
+      canteen_id,
+      items,
+      cash_amount,
+      online_amount,
+      other_amount,
+      description,
+    } = req.body;
 
     // Validate if current user belongs to this canteen (for managers)
     if (
@@ -22,7 +29,10 @@ exports.createSale = async (req, res) => {
     }
 
     // Get today's date
-    const today = new Date();
+    const now = new Date();
+    const twoHoursShift = 2 * 60 * 60 * 1000;
+    const adjustedTime = new Date(now.getTime() - twoHoursShift);
+    const today = new Date(adjustedTime);
     today.setHours(0, 0, 0, 0);
 
     // Check for existing sale today
@@ -42,10 +52,12 @@ exports.createSale = async (req, res) => {
     total_amount = Math.round((total_amount + Number.EPSILON) * 100) / 100;
 
     // Validate payment amounts
-    const provided_total = (cash_amount || 0) + (online_amount || 0);
+    const provided_total =
+      (cash_amount || 0) + (online_amount || 0) + (other_amount || 0);
     if (Math.abs(provided_total - total_amount) > 0.01) {
       return res.status(400).json({
-        error: "Cash amount plus online amount must equal total amount",
+        error:
+          "Cash amount plus online amount plus other amount must equal total amount",
         expected: total_amount,
         provided: provided_total,
       });
@@ -57,6 +69,8 @@ exports.createSale = async (req, res) => {
       sale.total_amount = total_amount;
       sale.cash_amount = cash_amount || 0;
       sale.online_amount = online_amount || 0;
+      sale.other_amount = other_amount || 0;
+      sale.description = description || sale.description;
       sale.updated_at = new Date();
     } else {
       // Create new sale
@@ -65,6 +79,8 @@ exports.createSale = async (req, res) => {
         total_amount,
         cash_amount: cash_amount || 0,
         online_amount: online_amount || 0,
+        other_amount: other_amount || 0,
+        description: description || undefined,
         created_by: req.user._id,
         date: today,
       });
@@ -184,7 +200,8 @@ exports.createSale = async (req, res) => {
 exports.updateSale = async (req, res) => {
   try {
     const { saleId } = req.params;
-    const { items, cash_amount, online_amount } = req.body;
+    const { items, cash_amount, online_amount, other_amount, description } =
+      req.body;
 
     console.log("UpdateSale - Starting update for sale:", saleId);
     console.log("UpdateSale - Items received:", JSON.stringify(items, null, 2));
@@ -210,14 +227,20 @@ exports.updateSale = async (req, res) => {
     }
 
     // Validate if sale is from today
-    const today = new Date();
+    const now = new Date();
+    const twoHoursShift = 2 * 60 * 60 * 1000;
+    const adjustedTime = new Date(now.getTime() - twoHoursShift);
+    const today = new Date(adjustedTime);
     today.setHours(0, 0, 0, 0);
     const saleDate = new Date(sale.date);
     saleDate.setHours(0, 0, 0, 0);
     if (saleDate.getTime() !== today.getTime()) {
       return res
         .status(403)
-        .json({ error: "You can only edit sales for today" });
+        .json({
+          error:
+            "You can only edit sales for today (adjusted for 2 AM boundary)",
+        });
     }
 
     // Calculate total amount
@@ -228,10 +251,12 @@ exports.updateSale = async (req, res) => {
     total_amount = Math.round((total_amount + Number.EPSILON) * 100) / 100;
 
     // Validate payment amounts
-    const provided_total = (cash_amount || 0) + (online_amount || 0);
+    const provided_total =
+      (cash_amount || 0) + (online_amount || 0) + (other_amount || 0);
     if (Math.abs(provided_total - total_amount) > 0.01) {
       return res.status(400).json({
-        error: "Cash amount plus online amount must equal total amount",
+        error:
+          "Cash amount plus online amount plus other amount must equal total amount",
         expected: total_amount,
         provided: provided_total,
       });
@@ -241,6 +266,10 @@ exports.updateSale = async (req, res) => {
     sale.total_amount = total_amount;
     sale.cash_amount = cash_amount || 0;
     sale.online_amount = online_amount || 0;
+    sale.other_amount = other_amount || 0;
+    if (description !== undefined) {
+      sale.description = description;
+    }
     sale.updated_at = new Date();
     await sale.save();
 
@@ -568,11 +597,9 @@ exports.getSalesByDateAndCanteen = async (req, res) => {
         req.user.role === "manager" &&
         req.user.canteen_id.toString() !== req.query.canteen_id
       ) {
-        return res
-          .status(403)
-          .json({
-            error: "You can only view sales from your assigned canteen",
-          });
+        return res.status(403).json({
+          error: "You can only view sales from your assigned canteen",
+        });
       }
       filter.canteen_id = req.query.canteen_id;
     }
@@ -661,6 +688,7 @@ exports.getSalesByDateRange = async (req, res) => {
           total_amount: 0,
           cash_amount: 0,
           online_amount: 0,
+          other_amount: 0,
           sales_count: 0,
           total_items: 0,
         };
@@ -668,6 +696,7 @@ exports.getSalesByDateRange = async (req, res) => {
       salesByDate[dateStr].total_amount += sale.total_amount;
       salesByDate[dateStr].cash_amount += sale.cash_amount || 0;
       salesByDate[dateStr].online_amount += sale.online_amount || 0;
+      salesByDate[dateStr].other_amount += sale.other_amount || 0;
       salesByDate[dateStr].sales_count += 1;
       const items = await SaleItem.find({ sale_id: sale._id });
       salesByDate[dateStr].total_items += items.reduce(
@@ -682,6 +711,7 @@ exports.getSalesByDateRange = async (req, res) => {
       cash_amount: Math.round((day.cash_amount + Number.EPSILON) * 100) / 100,
       online_amount:
         Math.round((day.online_amount + Number.EPSILON) * 100) / 100,
+      other_amount: Math.round((day.other_amount + Number.EPSILON) * 100) / 100,
     }));
 
     res.json(result);

@@ -26,7 +26,7 @@ const userSchema = new Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'manager'],
+    enum: ['admin', 'manager', 'super_admin'],
     required: true
   },
   canteen_id: {

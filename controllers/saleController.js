@@ -7,6 +7,19 @@ const Item = require("../models/Item");
 // Special category ID that increases stock instead of decreasing
 const SPECIAL_CATEGORY_ID = "68fd9f0be8e2ff65f8459ffa";
 
+// Helper to send consistent error responses to frontend
+const sendError = (res, status = 500, err) => {
+  const message =
+    err && err.message ? err.message : String(err) || "Internal server error";
+  const payload = { error: message };
+
+  // Include stack trace when not in production to aid debugging
+  if (process.env.NODE_ENV !== "production" && err && err.stack) {
+    payload.stack = err.stack;
+  }
+
+  return res.status(status).json(payload);
+};
 exports.createSale = async (req, res) => {
   try {
     const {
@@ -193,7 +206,7 @@ exports.createSale = async (req, res) => {
     res.status(201).json(result);
   } catch (err) {
     console.error("Error creating/updating sale:", err);
-    res.status(500).json({ error: err.message });
+    return sendError(res, 500, err);
   }
 };
 
@@ -235,12 +248,9 @@ exports.updateSale = async (req, res) => {
     const saleDate = new Date(sale.date);
     saleDate.setHours(0, 0, 0, 0);
     if (saleDate.getTime() !== today.getTime()) {
-      return res
-        .status(403)
-        .json({
-          error:
-            "You can only edit sales for today (adjusted for 2 AM boundary)",
-        });
+      return res.status(403).json({
+        error: "You can only edit sales for today (adjusted for 2 AM boundary)",
+      });
     }
 
     // Calculate total amount
@@ -458,7 +468,7 @@ exports.updateSale = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("Error updating sale:", err);
-    res.status(500).json({ error: err.message });
+    return sendError(res, 500, err);
   }
 };
 
@@ -504,7 +514,7 @@ exports.getSales = async (req, res) => {
     res.json(salesWithItems);
   } catch (err) {
     console.error("Error fetching sales:", err);
-    res.status(500).json({ error: err.message });
+    return sendError(res, 500, err);
   }
 };
 
@@ -540,7 +550,7 @@ exports.getSaleById = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("Error fetching sale:", err);
-    res.status(500).json({ error: err.message });
+    return sendError(res, 500, err);
   }
 };
 
@@ -578,7 +588,7 @@ exports.getSalesByCanteen = async (req, res) => {
     res.json(salesWithItems);
   } catch (err) {
     console.error("Error fetching sales by canteen:", err);
-    res.status(500).json({ error: err.message });
+    return sendError(res, 500, err);
   }
 };
 
@@ -639,7 +649,7 @@ exports.getSalesByDateAndCanteen = async (req, res) => {
     res.json(salesWithItems);
   } catch (err) {
     console.error("Error fetching sales by date and canteen:", err);
-    res.status(500).json({ error: err.message });
+    return sendError(res, 500, err);
   }
 };
 
@@ -717,6 +727,6 @@ exports.getSalesByDateRange = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("Error fetching sales by date range:", err);
-    res.status(500).json({ error: err.message });
+    return sendError(res, 500, err);
   }
 };

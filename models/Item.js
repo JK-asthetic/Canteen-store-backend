@@ -7,6 +7,10 @@ const itemSchema = new Schema({
     required: true,
     trim: true
   },
+  name_hindi: {
+    type: String,
+    trim: true
+  },
   description: {
     type: String,
     trim: true

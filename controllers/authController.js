@@ -33,21 +33,21 @@ exports.login = async (req, res) => {
       await canteen.autoUnlockIfNeeded();
 
       // Check if canteen is locked
-      if (canteen.is_locked) {
-        return res.status(403).json({
-          error: "The canteen is locked",
-          message:
-            canteen.lock_reason ||
-            "Your assigned canteen is currently locked. Please contact an administrator.",
-          locked_at: canteen.locked_at,
-          locked_by: canteen.locked_by,
-        });
-      }
+      // if (canteen.is_locked) {
+      //   return res.status(403).json({
+      //     error: "The canteen is locked",
+      //     message:
+      //       canteen.lock_reason ||
+      //       "Your assigned canteen is currently locked. Please contact an administrator.",
+      //     locked_at: canteen.locked_at,
+      //     locked_by: canteen.locked_by,
+      //   });
+      // }
     }
 
     // Create and sign the JWT token
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
-      expiresIn: "1d", // Token expires in 1 day
+      expiresIn: "3d", // Token expires in 3 days
     });
 
     // Return token and user info

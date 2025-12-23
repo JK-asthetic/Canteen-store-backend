@@ -1,17 +1,28 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const saleController = require('../controllers/saleController');
-const authMiddleware = require('../middleware/auth');
+const saleController = require("../controllers/saleController");
+const authMiddleware = require("../middleware/auth");
 
+// Sale routes - Order matters! More specific routes should come before general ones
+router.get(
+  "/sales/canteen/:canteenId",
+  authMiddleware,
+  saleController.getSalesByCanteen
+);
+router.get(
+  "/sales/date-range",
+  authMiddleware,
+  saleController.getSalesByDateRange
+);
+router.get("/sales/:id", authMiddleware, saleController.getSaleById);
 
-router.get('/sales/canteen/:canteenId', authMiddleware, saleController.getSalesByCanteen);
-router.get('/sales/date-range', authMiddleware, saleController.getSalesByDateRange);
+// NEW: Verification route - Must come before general routes
+router.post("/sales/:saleId/verify", authMiddleware, saleController.verifySale);
 
-// Sale routes
-router.post('/sales', authMiddleware, saleController.createSale);
-router.get('/sales', authMiddleware, saleController.getSalesByDateAndCanteen); // Updated to filter by canteen and date
-router.get('/sales', authMiddleware, saleController.getSales);
-router.get('/sales/:id', authMiddleware, saleController.getSaleById);
-router.put('/sales/:saleId', authMiddleware, saleController.updateSale); // Added route for updating sales
+router.post("/sales", authMiddleware, saleController.createSale);
+router.put("/sales/:saleId", authMiddleware, saleController.updateSale);
+
+// General get route should be last
+router.get("/sales", authMiddleware, saleController.getSalesByDateAndCanteen);
 
 module.exports = router;

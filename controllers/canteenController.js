@@ -1,4 +1,4 @@
-const Canteen = require('../models/Canteen');
+const Canteen = require("../models/Canteen");
 
 exports.createCanteen = async (req, res) => {
   try {
@@ -6,7 +6,7 @@ exports.createCanteen = async (req, res) => {
     await canteen.save();
     res.status(201).json(canteen);
   } catch (err) {
-    console.error('Error creating canteen:', err);
+    console.error("Error creating canteen:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -15,38 +15,44 @@ exports.getCanteens = async (req, res) => {
   try {
     const { type, include_locked } = req.query;
     let query = {};
-    
+
     if (type) {
       query.type = type;
     }
-    
+
     // By default, include all canteens (locked and unlocked) for admin
     // Admin needs to see locked canteens to manage them
-    if (include_locked === 'false') {
+    if (include_locked === "false") {
       query.is_locked = { $ne: true };
     }
-    
-    const canteens = await Canteen.find(query).populate('locked_by', 'name email');
+
+    const canteens = await Canteen.find(query).populate(
+      "locked_by",
+      "name email"
+    );
     res.json(canteens);
   } catch (err) {
-    console.error('Error fetching canteens:', err);
+    console.error("Error fetching canteens:", err);
     res.status(500).json({ error: err.message });
   }
 };
 
 exports.getCanteenById = async (req, res) => {
   try {
-    const canteen = await Canteen.findById(req.params.id).populate('locked_by', 'name email');
+    const canteen = await Canteen.findById(req.params.id).populate(
+      "locked_by",
+      "name email"
+    );
     if (!canteen) {
-      return res.status(404).json({ error: 'Canteen not found' });
+      return res.status(404).json({ error: "Canteen not found" });
     }
-    
+
     // Auto-unlock if needed
     await canteen.autoUnlockIfNeeded();
-    
+
     res.json(canteen);
   } catch (err) {
-    console.error('Error fetching canteen:', err);
+    console.error("Error fetching canteen:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -57,15 +63,15 @@ exports.updateCanteen = async (req, res) => {
       req.params.id,
       { $set: req.body },
       { new: true, runValidators: true }
-    ).populate('locked_by', 'name email');
+    ).populate("locked_by", "name email");
 
     if (!updatedCanteen) {
-      return res.status(404).json({ error: 'Canteen not found' });
+      return res.status(404).json({ error: "Canteen not found" });
     }
 
     res.json(updatedCanteen);
   } catch (err) {
-    console.error('Error updating canteen:', err);
+    console.error("Error updating canteen:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -74,11 +80,11 @@ exports.deleteCanteen = async (req, res) => {
   try {
     const deletedCanteen = await Canteen.findByIdAndDelete(req.params.id);
     if (!deletedCanteen) {
-      return res.status(404).json({ error: 'Canteen not found' });
+      return res.status(404).json({ error: "Canteen not found" });
     }
-    res.json({ message: 'Canteen deleted successfully' });
+    res.json({ message: "Canteen deleted successfully" });
   } catch (err) {
-    console.error('Error deleting canteen:', err);
+    console.error("Error deleting canteen:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -92,27 +98,27 @@ exports.lockCanteen = async (req, res) => {
 
     const canteen = await Canteen.findById(id);
     if (!canteen) {
-      return res.status(404).json({ error: 'Canteen not found' });
+      return res.status(404).json({ error: "Canteen not found" });
     }
 
     if (canteen.is_locked) {
-      return res.status(400).json({ error: 'Canteen is already locked' });
+      return res.status(400).json({ error: "Canteen is already locked" });
     }
 
     canteen.is_locked = true;
     canteen.locked_at = new Date();
     canteen.locked_by = adminId;
-    canteen.lock_reason = reason || 'Locked by admin';
+    canteen.lock_reason = reason || "Locked by admin";
 
     await canteen.save();
-    await canteen.populate('locked_by', 'name email');
+    await canteen.populate("locked_by", "name email");
 
     res.json({
-      message: 'Canteen locked successfully',
-      canteen
+      message: "Canteen locked successfully",
+      canteen,
     });
   } catch (err) {
-    console.error('Error locking canteen:', err);
+    console.error("Error locking canteen:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -124,11 +130,11 @@ exports.unlockCanteen = async (req, res) => {
 
     const canteen = await Canteen.findById(id);
     if (!canteen) {
-      return res.status(404).json({ error: 'Canteen not found' });
+      return res.status(404).json({ error: "Canteen not found" });
     }
 
     if (!canteen.is_locked) {
-      return res.status(400).json({ error: 'Canteen is not locked' });
+      return res.status(400).json({ error: "Canteen is not locked" });
     }
 
     canteen.is_locked = false;
@@ -139,11 +145,11 @@ exports.unlockCanteen = async (req, res) => {
     await canteen.save();
 
     res.json({
-      message: 'Canteen unlocked successfully',
-      canteen
+      message: "Canteen unlocked successfully",
+      canteen,
     });
   } catch (err) {
-    console.error('Error unlocking canteen:', err);
+    console.error("Error unlocking canteen:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -151,12 +157,14 @@ exports.unlockCanteen = async (req, res) => {
 // Get locked canteens
 exports.getLockedCanteens = async (req, res) => {
   try {
-    const lockedCanteens = await Canteen.find({ is_locked: true })
-      .populate('locked_by', 'name email');
-    
+    const lockedCanteens = await Canteen.find({ is_locked: true }).populate(
+      "locked_by",
+      "name email"
+    );
+
     res.json(lockedCanteens);
   } catch (err) {
-    console.error('Error fetching locked canteens:', err);
+    console.error("Error fetching locked canteens:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -165,29 +173,33 @@ exports.getLockedCanteens = async (req, res) => {
 exports.autoUnlockCanteens = async (req, res) => {
   try {
     const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+
     const result = await Canteen.updateMany(
       {
         is_locked: true,
-        locked_at: { $lt: startOfToday }
+        locked_at: { $lt: startOfToday },
       },
       {
         $set: {
           is_locked: false,
           locked_at: null,
           locked_by: null,
-          lock_reason: null
-        }
+          lock_reason: null,
+        },
       }
     );
 
     res.json({
-      message: 'Auto-unlock completed',
-      unlockedCount: result.modifiedCount
+      message: "Auto-unlock completed",
+      unlockedCount: result.modifiedCount,
     });
   } catch (err) {
-    console.error('Error in auto-unlock:', err);
+    console.error("Error in auto-unlock:", err);
     res.status(500).json({ error: err.message });
   }
 };

@@ -57,12 +57,34 @@ exports.createSale = async (req, res) => {
       },
     });
 
-    // Calculate total amount
-    let total_amount = 0;
-    for (const item of items) {
-      total_amount += item.quantity * item.unit_price;
+    // Get yesterday's sale to check for adjustments
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdaySale = await Sale.findOne({
+      canteen_id,
+      date: {
+        $gte: yesterday,
+        $lt: today,
+      },
+    });
+
+    // Get previous day adjustment from yesterday's sale
+    let previous_day_adjustment = 0;
+    let previous_day_reason = "";
+    if (yesterdaySale && yesterdaySale.next_day_adjustment) {
+      previous_day_adjustment = yesterdaySale.next_day_adjustment;
+      previous_day_reason = yesterdaySale.next_day_reason || "";
     }
-    total_amount = Math.round((total_amount + Number.EPSILON) * 100) / 100;
+
+    // Calculate total amount from items
+    let itemsTotal = 0;
+    for (const item of items) {
+      itemsTotal += item.quantity * item.unit_price;
+    }
+    itemsTotal = Math.round((itemsTotal + Number.EPSILON) * 100) / 100;
+
+    // Total amount includes items + previous day adjustment
+    const total_amount = itemsTotal + previous_day_adjustment;
 
     // Validate payment amounts
     const provided_total =
@@ -70,9 +92,11 @@ exports.createSale = async (req, res) => {
     if (Math.abs(provided_total - total_amount) > 0.01) {
       return res.status(400).json({
         error:
-          "Cash amount plus online amount plus other amount must equal total amount",
+          "Cash + Online + Other amounts must equal total amount (including previous day adjustment)",
         expected: total_amount,
         provided: provided_total,
+        items_total: itemsTotal,
+        previous_day_adjustment: previous_day_adjustment,
       });
     }
 
@@ -84,6 +108,11 @@ exports.createSale = async (req, res) => {
       sale.online_amount = online_amount || 0;
       sale.other_amount = other_amount || 0;
       sale.description = description || sale.description;
+      // Keep previous_day_adjustment unchanged if it exists
+      if (!sale.previous_day_adjustment) {
+        sale.previous_day_adjustment = previous_day_adjustment;
+        sale.previous_day_reason = previous_day_reason;
+      }
       sale.updated_at = new Date();
     } else {
       // Create new sale
@@ -94,6 +123,8 @@ exports.createSale = async (req, res) => {
         online_amount: online_amount || 0,
         other_amount: other_amount || 0,
         description: description || undefined,
+        previous_day_adjustment,
+        previous_day_reason,
         created_by: req.user._id,
         date: today,
       });
@@ -101,9 +132,8 @@ exports.createSale = async (req, res) => {
 
     await sale.save();
 
-    // Update or create sale items
+    // ... rest of the code for handling items (same as before)
     for (const item of items) {
-      // Fetch item details to check category
       const itemDetails = await Item.findById(item.item_id);
       if (!itemDetails) {
         return res.status(400).json({
@@ -120,7 +150,6 @@ exports.createSale = async (req, res) => {
         item_id: item.item_id,
       });
 
-      // Update stock
       const stock = await Stock.findOne({
         canteen_id,
         item_id: item.item_id,
@@ -132,14 +161,12 @@ exports.createSale = async (req, res) => {
         });
       }
 
-      // For normal items, check if sufficient stock exists
       if (!isSpecialCategory && stock.quantity < item.quantity) {
         return res.status(400).json({
           error: `Insufficient stock for item ${item.item_id}`,
         });
       }
 
-      // Calculate quantity difference for stock history
       let quantityDiff = item.quantity;
       if (saleItem) {
         quantityDiff = item.quantity - saleItem.quantity;
@@ -159,7 +186,6 @@ exports.createSale = async (req, res) => {
       await saleItem.save();
       saleItems.push(saleItem);
 
-      // Update stock - INCREASE for special category, DECREASE for normal items
       if (isSpecialCategory) {
         stock.quantity += quantityDiff;
       } else {
@@ -168,7 +194,6 @@ exports.createSale = async (req, res) => {
       stock.updated_at = new Date();
       await stock.save();
 
-      // Update stock history
       let stockHistory = await StockHistory.findOne({
         canteen_id,
         item_id: item.item_id,
@@ -210,22 +235,82 @@ exports.createSale = async (req, res) => {
   }
 };
 
+exports.verifySale = async (req, res) => {
+  try {
+    const { saleId } = req.params;
+    const { adjustment_amount, reason } = req.body;
+
+    // Only admin can verify
+    if (req.user.role !== "admin" && req.user.role !== "super_admin") {
+      return res.status(403).json({ error: "Only admins can verify sales" });
+    }
+
+    const sale = await Sale.findById(saleId);
+    if (!sale) {
+      return res.status(404).json({ error: "Sale not found" });
+    }
+
+    // Check if already verified
+    if (sale.verified_by) {
+      return res.status(400).json({ error: "Sale already verified" });
+    }
+
+    // Validate adjustment amount
+    if (typeof adjustment_amount !== "number") {
+      return res
+        .status(400)
+        .json({ error: "Adjustment amount must be a number" });
+    }
+
+    if (!reason || reason.trim() === "") {
+      return res
+        .status(400)
+        .json({ error: "Reason is required for verification" });
+    }
+
+    // Set next day adjustment (this will be picked up by tomorrow's sale)
+    sale.next_day_adjustment = adjustment_amount;
+    sale.next_day_reason = reason.trim();
+    sale.verified_by = req.user._id;
+    sale.verified_at = new Date();
+
+    await sale.save();
+
+    // Lock the canteen after verification
+    const Canteen = require("../models/Canteen");
+    await Canteen.findByIdAndUpdate(sale.canteen_id, {
+      $set: {
+        is_locked: true,
+        locked_at: new Date(),
+        locked_by: req.user._id,
+        lock_reason: `Sale verified for ${
+          sale.date.toISOString().split("T")[0]
+        }`,
+      },
+    });
+
+    const result = await Sale.findById(saleId)
+      .populate("canteen_id", "name location")
+      .populate("created_by", "name username")
+      .populate("verified_by", "name username");
+
+    res.json(result);
+  } catch (err) {
+    console.error("Error verifying sale:", err);
+    return sendError(res, 500, err);
+  }
+};
+
 exports.updateSale = async (req, res) => {
   try {
     const { saleId } = req.params;
     const { items, cash_amount, online_amount, other_amount, description } =
       req.body;
 
-    console.log("UpdateSale - Starting update for sale:", saleId);
-    console.log("UpdateSale - Items received:", JSON.stringify(items, null, 2));
-
-    // Find the sale
     const sale = await Sale.findById(saleId);
     if (!sale) {
       return res.status(404).json({ error: "Sale not found" });
     }
-
-    console.log("UpdateSale - Sale found:", sale._id);
 
     // Validate permissions
     if (
@@ -253,12 +338,15 @@ exports.updateSale = async (req, res) => {
       });
     }
 
-    // Calculate total amount
-    let total_amount = 0;
+    // Calculate total amount from items
+    let itemsTotal = 0;
     for (const item of items) {
-      total_amount += item.quantity * item.unit_price;
+      itemsTotal += item.quantity * item.unit_price;
     }
-    total_amount = Math.round((total_amount + Number.EPSILON) * 100) / 100;
+    itemsTotal = Math.round((itemsTotal + Number.EPSILON) * 100) / 100;
+
+    // Total includes previous day adjustment (don't change it)
+    const total_amount = itemsTotal + (sale.previous_day_adjustment || 0);
 
     // Validate payment amounts
     const provided_total =
@@ -266,9 +354,11 @@ exports.updateSale = async (req, res) => {
     if (Math.abs(provided_total - total_amount) > 0.01) {
       return res.status(400).json({
         error:
-          "Cash amount plus online amount plus other amount must equal total amount",
+          "Cash + Online + Other amounts must equal total amount (including previous day adjustment)",
         expected: total_amount,
         provided: provided_total,
+        items_total: itemsTotal,
+        previous_day_adjustment: sale.previous_day_adjustment || 0,
       });
     }
 
@@ -280,23 +370,21 @@ exports.updateSale = async (req, res) => {
     if (description !== undefined) {
       sale.description = description;
     }
+    // DON'T change previous_day_adjustment - it's locked once set
     sale.updated_at = new Date();
     await sale.save();
 
-    // Get existing sale items
+    // ... rest of the code for handling items (same as before)
     const existingItems = await SaleItem.find({ sale_id: sale._id });
     const saleItems = [];
 
-    // Process each item in the request
     for (const item of items) {
-      // Fetch item details to check category
       const itemDetails = await Item.findById(item.item_id);
       if (!itemDetails) {
         return res.status(400).json({
           error: `Item ${item.item_id} not found`,
         });
       }
-      console.log("UpdateSale - Processing item:", itemDetails.category);
 
       const isSpecialCategory = itemDetails.category
         ? itemDetails.category.toString() === SPECIAL_CATEGORY_ID
@@ -316,11 +404,8 @@ exports.updateSale = async (req, res) => {
         });
       }
 
-      // Calculate available stock considering existing sale quantities
       const originalQuantity = saleItem ? saleItem.quantity : 0;
 
-      // For special category, we don't need to check stock availability
-      // For normal items, check if sufficient stock is available
       if (!isSpecialCategory) {
         const availableStock = stock.quantity + originalQuantity;
         if (item.quantity > availableStock) {
@@ -330,7 +415,6 @@ exports.updateSale = async (req, res) => {
         }
       }
 
-      // Calculate quantity difference
       const quantityDiff = item.quantity - originalQuantity;
 
       if (saleItem) {
@@ -350,7 +434,6 @@ exports.updateSale = async (req, res) => {
       await saleItem.save();
       saleItems.push(saleItem);
 
-      // Update stock - INCREASE for special category, DECREASE for normal items
       if (isSpecialCategory) {
         stock.quantity += quantityDiff;
       } else {
@@ -359,7 +442,6 @@ exports.updateSale = async (req, res) => {
       stock.updated_at = new Date();
       await stock.save();
 
-      // Update stock history
       const historyDate = new Date(sale.date);
       historyDate.setHours(0, 0, 0, 0);
 
@@ -370,7 +452,6 @@ exports.updateSale = async (req, res) => {
       });
 
       if (stockHistory) {
-        // For special category, adjust sold_stock differently
         stockHistory.sold_stock += quantityDiff;
         stockHistory.closing_stock = stock.quantity;
         stockHistory.updated_at = new Date();
@@ -393,25 +474,16 @@ exports.updateSale = async (req, res) => {
       }
     }
 
-    // Remove items not in the updated list
     for (const existingItem of existingItems) {
       const itemIdStr = existingItem.item_id
         ? existingItem.item_id.toString()
         : null;
       if (!itemIdStr || !items.find((i) => i.item_id === itemIdStr)) {
-        console.log("UpdateSale - Removing item:", itemIdStr);
-
-        // Fetch item details to check category
         const itemDetails = await Item.findById(existingItem.item_id);
         const isSpecialCategory =
           itemDetails && itemDetails.category
             ? itemDetails.category.toString() === SPECIAL_CATEGORY_ID
             : false;
-
-        console.log(
-          "UpdateSale - Item to remove is special category:",
-          isSpecialCategory
-        );
 
         const stock = await Stock.findOne({
           canteen_id: sale.canteen_id,
@@ -419,7 +491,6 @@ exports.updateSale = async (req, res) => {
         });
 
         if (stock) {
-          // Reverse the stock change - DECREASE for special category, INCREASE for normal items
           if (isSpecialCategory) {
             stock.quantity -= existingItem.quantity;
           } else {

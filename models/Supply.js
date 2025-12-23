@@ -1,3 +1,4 @@
+// At the end of models/Supply.js
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
@@ -16,15 +17,14 @@ const supplySchema = new Schema({
     type: Date,
     default: Date.now
   },
-  // status: {
-  //   type: String,
-  //   enum: ['pending', 'delivered', 'cancelled'],
-  //   default: 'pending'
-  // },
   created_by: {
     type: Schema.Types.ObjectId,
     ref: 'User',
     required: true
+  },
+  is_locked: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: {
@@ -33,4 +33,4 @@ const supplySchema = new Schema({
   }
 });
 
-module.exports = mongoose.model('Supply', supplySchema);
+module.exports = mongoose.model('Supply', supplySchema);  // Make sure this line exists

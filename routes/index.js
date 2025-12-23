@@ -13,6 +13,8 @@ const categoryRoutes = require("./category");
 const unitRoutes = require("./unit");
 const timeRoutes = require("./timeRoutes");
 const versionRoutes = require("./versionRoutes");
+const backupRoutes = require("./backupRoutes");
+
 // Register all routes
 router.use("/auth", authRoutes);
 router.use(userRoutes);
@@ -25,5 +27,7 @@ router.use(categoryRoutes);
 router.use(unitRoutes);
 router.use(timeRoutes);
 router.use("/version", versionRoutes);
+router.use(backupRoutes); // Add backup routes
+
 // Export the router
 module.exports = router;

@@ -36,6 +36,33 @@ const saleSchema = new Schema(
       trim: true,
       maxlength: 500,
     },
+    // Adjustment FROM previous day
+    previous_day_adjustment: {
+      type: Number,
+      default: 0,
+    },
+    previous_day_reason: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
+    // Adjustment FOR next day (set during verification)
+    next_day_adjustment: {
+      type: Number,
+      default: 0,
+    },
+    next_day_reason: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
+    verified_by: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+    },
+    verified_at: {
+      type: Date,
+    },
     created_by: {
       type: Schema.Types.ObjectId,
       ref: "User",
@@ -54,13 +81,11 @@ const saleSchema = new Schema(
 saleSchema.pre("save", function (next) {
   const roundToTwo = (num) => Math.round((num + Number.EPSILON) * 100) / 100;
 
-  // Round to 2 decimal places to avoid floating point issues
   const cashRounded = roundToTwo(this.cash_amount);
   const onlineRounded = roundToTwo(this.online_amount);
   const otherRounded = roundToTwo(this.other_amount);
   const totalRounded = roundToTwo(this.total_amount);
 
-  // Validate that cash + online + other = total (with rounding tolerance)
   if (
     Math.abs(cashRounded + onlineRounded + otherRounded - totalRounded) > 0.01
   ) {

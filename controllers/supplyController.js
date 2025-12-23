@@ -39,15 +39,14 @@ exports.createSupply = async (req, res) => {
       }
     }
 
-    // Check if a supply already exists for today
+    // Get today's date
     const now = new Date();
     const twoHoursShift = 2 * 60 * 60 * 1000;
     const adjustedTime = new Date(now.getTime() - twoHoursShift);
     const today = new Date(adjustedTime);
     today.setHours(0, 0, 0, 0);
 
-    console.log("Creating supply - adjusted today:", today);
-
+    // Find or create supply for today
     let supply = await Supply.findOne({
       from_canteen_id,
       to_canteen_id,
@@ -57,44 +56,64 @@ exports.createSupply = async (req, res) => {
       },
     });
 
-    // If no supply exists for today, create a new one
     if (!supply) {
       supply = new Supply({
         from_canteen_id,
         to_canteen_id,
         created_by: req.user._id,
-        date: today, // Use adjusted date
+        date: today,
       });
-
       await supply.save();
     }
 
-    // Process each item in the supply
+    // Get today's total for each item (to validate negative quantities)
+    const todayTotals = await SupplyItem.aggregate([
+      {
+        $match: {
+          supply_id: supply._id,
+        },
+      },
+      {
+        $group: {
+          _id: "$item_id",
+          total: { $sum: "$quantity" },
+        },
+      },
+    ]);
+
+    const todayTotalsMap = {};
+    todayTotals.forEach((t) => {
+      todayTotalsMap[t._id.toString()] = t.total;
+    });
+
+    // Process each item
     const supplyItems = [];
     for (const item of items) {
-      // Check if this item already exists in today's supply
-      const existingItem = await SupplyItem.findOne({
+      const itemIdStr = item.item_id.toString();
+      const currentTotal = todayTotalsMap[itemIdStr] || 0;
+
+      // Validate negative quantity
+      if (item.quantity < 0) {
+        if (currentTotal + item.quantity < 0) {
+          return res.status(400).json({
+            error: `Cannot reduce quantity below zero for item ${itemIdStr}. Current total: ${currentTotal}, Attempting to reduce by: ${Math.abs(
+              item.quantity
+            )}`,
+          });
+        }
+      }
+
+      // Always create new entry (never update existing)
+      const supplyItem = new SupplyItem({
         supply_id: supply._id,
         item_id: item.item_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        created_by: req.user._id,
       });
 
-      if (existingItem) {
-        // Update existing supply item quantity
-        existingItem.quantity += item.quantity;
-        await existingItem.save();
-        supplyItems.push(existingItem);
-      } else {
-        // Create new supply item
-        const supplyItem = new SupplyItem({
-          supply_id: supply._id,
-          item_id: item.item_id,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-        });
-
-        await supplyItem.save();
-        supplyItems.push(supplyItem);
-      }
+      await supplyItem.save();
+      supplyItems.push(supplyItem);
 
       // Update destination canteen stock
       let destStockItem = await Stock.findOne({
@@ -103,47 +122,57 @@ exports.createSupply = async (req, res) => {
       });
 
       if (destStockItem) {
-        // Update existing stock
         const previousQuantity = destStockItem.quantity;
         destStockItem.quantity += item.quantity;
         destStockItem.updated_at = new Date();
         await destStockItem.save();
 
-        // Update destination canteen stock history
+        // Update stock history
         await updateStockHistory(
           to_canteen_id,
           item.item_id,
           previousQuantity,
           destStockItem.quantity,
-          item.quantity,
-          0
+          Math.max(0, item.quantity), // received_stock only positive
+          Math.max(0, -item.quantity) // sold_stock for negative quantities
         );
       } else {
-        // Create new stock entry if it doesn't exist
+        // Create new stock entry
         destStockItem = new Stock({
           canteen_id: to_canteen_id,
           item_id: item.item_id,
-          quantity: item.quantity,
+          quantity: Math.max(0, item.quantity),
           updated_at: new Date(),
         });
         await destStockItem.save();
 
-        // Create destination canteen stock history
         await updateStockHistory(
           to_canteen_id,
           item.item_id,
           0,
-          item.quantity,
-          item.quantity,
+          destStockItem.quantity,
+          Math.max(0, item.quantity),
           0
         );
       }
     }
 
-    // Return supply with items
+    // Return full list of supply items with populated item and creator info
+    const populatedItems = await SupplyItem.find({ supply_id: supply._id })
+      .populate({
+        path: "item_id",
+        select: "name category unit",
+        populate: [
+          { path: "category", select: "name" },
+          { path: "unit", select: "name abbreviation" },
+        ],
+      })
+      .populate("created_by", "name username email")
+      .sort({ created_at: 1 });
+
     const result = {
       ...supply.toObject(),
-      items: supplyItems,
+      items: populatedItems,
     };
 
     res.status(201).json(result);
@@ -158,11 +187,15 @@ exports.updateSupply = async (req, res) => {
     const { id } = req.params;
     const { items } = req.body;
 
-    // Find the supply
     const supply = await Supply.findById(id);
 
     if (!supply) {
       return res.status(404).json({ error: "Supply not found" });
+    }
+
+    // Check if supply is locked
+    if (supply.is_locked) {
+      return res.status(403).json({ error: "Cannot modify locked supply" });
     }
 
     // Check permissions
@@ -174,129 +207,141 @@ exports.updateSupply = async (req, res) => {
       }
     }
 
+    // Get today's total for each item
+    const todayTotals = await SupplyItem.aggregate([
+      {
+        $match: {
+          supply_id: supply._id,
+        },
+      },
+      {
+        $group: {
+          _id: "$item_id",
+          total: { $sum: "$quantity" },
+        },
+      },
+    ]);
+
+    const todayTotalsMap = {};
+    todayTotals.forEach((t) => {
+      todayTotalsMap[t._id.toString()] = t.total;
+    });
+
     // Process each item
     const supplyItems = [];
     for (const item of items) {
-      // Check if item already exists in this supply
-      const existingItem = await SupplyItem.findOne({
+      const itemIdStr = item.item_id.toString();
+      const currentTotal = todayTotalsMap[itemIdStr] || 0;
+
+      // Validate negative quantity
+      if (item.quantity < 0) {
+        if (currentTotal + item.quantity < 0) {
+          return res.status(400).json({
+            error: `Cannot reduce quantity below zero for item ${itemIdStr}. Current total: ${currentTotal}, Attempting to reduce by: ${Math.abs(
+              item.quantity
+            )}`,
+          });
+        }
+      }
+
+      // Always create new entry
+      const supplyItem = new SupplyItem({
         supply_id: supply._id,
+        item_id: item.item_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        created_by: req.user._id,
+      });
+
+      await supplyItem.save();
+      supplyItems.push(supplyItem);
+
+      // Update destination canteen stock
+      let destStockItem = await Stock.findOne({
+        canteen_id: supply.to_canteen_id,
         item_id: item.item_id,
       });
 
-      let supplyItem;
-      let quantityDifference = item.quantity;
+      if (destStockItem) {
+        const previousQuantity = destStockItem.quantity;
+        destStockItem.quantity += item.quantity;
+        destStockItem.updated_at = new Date();
+        await destStockItem.save();
 
-      if (existingItem) {
-        // Calculate difference to update stock
-        quantityDifference = item.quantity - existingItem.quantity;
+        // Update stock history
+        const now = new Date();
+        const twoHoursShift = 2 * 60 * 60 * 1000;
+        const adjustedTime = new Date(now.getTime() - twoHoursShift);
+        const today = new Date(adjustedTime);
+        today.setHours(0, 0, 0, 0);
 
-        // Update existing supply item
-        existingItem.quantity = item.quantity;
-        existingItem.unit_price = item.unit_price;
-        await existingItem.save();
-        supplyItem = existingItem;
-      } else {
-        // Create new supply item
-        supplyItem = new SupplyItem({
-          supply_id: supply._id,
-          item_id: item.item_id,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-        });
-        await supplyItem.save();
-      }
-
-      supplyItems.push(supplyItem);
-
-      // Only update stock if there's a quantity change
-      if (quantityDifference !== 0) {
-        // Update destination canteen stock
-        let destStockItem = await Stock.findOne({
+        let stockHistory = await StockHistory.findOne({
           canteen_id: supply.to_canteen_id,
           item_id: item.item_id,
+          date: today,
         });
 
-        if (destStockItem) {
-          const previousQuantity = destStockItem.quantity;
-          destStockItem.quantity += quantityDifference;
-          destStockItem.updated_at = new Date();
-          await destStockItem.save();
-
-          // Find today's stock history to update it directly
-          const now = new Date();
-          const twoHoursShift = 2 * 60 * 60 * 1000;
-          const adjustedTime = new Date(now.getTime() - twoHoursShift);
-          const today = new Date(adjustedTime);
-          today.setHours(0, 0, 0, 0);
-
-          console.log("Updating supply - adjusted today:", today);
-
-          let stockHistory = await StockHistory.findOne({
+        if (stockHistory) {
+          if (item.quantity > 0) {
+            stockHistory.received_stock += item.quantity;
+          } else {
+            stockHistory.sold_stock += Math.abs(item.quantity);
+          }
+          stockHistory.closing_stock = destStockItem.quantity;
+          await stockHistory.save();
+        } else if (item.quantity > 0) {
+          stockHistory = new StockHistory({
             canteen_id: supply.to_canteen_id,
             item_id: item.item_id,
             date: today,
-          });
-
-          if (stockHistory) {
-            // Direct update to received_stock without affecting sold_stock
-            if (quantityDifference > 0) {
-              // Increasing quantity - add to received_stock
-              stockHistory.received_stock += quantityDifference;
-            } else {
-              // Decreasing quantity - reduce received_stock (never below 0)
-              stockHistory.received_stock = Math.max(
-                0,
-                stockHistory.received_stock + quantityDifference
-              );
-            }
-
-            stockHistory.closing_stock = destStockItem.quantity;
-            await stockHistory.save();
-          } else if (quantityDifference > 0) {
-            // Create new stock history if it doesn't exist
-            stockHistory = new StockHistory({
-              canteen_id: supply.to_canteen_id,
-              item_id: item.item_id,
-              date: today,
-              opening_stock: previousQuantity,
-              received_stock: quantityDifference,
-              sold_stock: 0,
-              closing_stock: destStockItem.quantity,
-            });
-            await stockHistory.save();
-          }
-        } else if (quantityDifference > 0) {
-          // Create new stock entry if doesn't exist and quantity is positive
-          destStockItem = new Stock({
-            canteen_id: supply.to_canteen_id,
-            item_id: item.item_id,
-            quantity: quantityDifference,
-            updated_at: new Date(),
-          });
-          await destStockItem.save();
-
-          // Create new stock history record
-          const stockHistory = new StockHistory({
-            canteen_id: supply.to_canteen_id,
-            item_id: item.item_id,
-            date: new Date(),
-            opening_stock: 0,
-            received_stock: quantityDifference,
+            opening_stock: previousQuantity,
+            received_stock: item.quantity,
             sold_stock: 0,
-            closing_stock: quantityDifference,
+            closing_stock: destStockItem.quantity,
           });
           await stockHistory.save();
         }
+      } else if (item.quantity > 0) {
+        destStockItem = new Stock({
+          canteen_id: supply.to_canteen_id,
+          item_id: item.item_id,
+          quantity: item.quantity,
+          updated_at: new Date(),
+        });
+        await destStockItem.save();
+
+        const stockHistory = new StockHistory({
+          canteen_id: supply.to_canteen_id,
+          item_id: item.item_id,
+          date: new Date(),
+          opening_stock: 0,
+          received_stock: item.quantity,
+          sold_stock: 0,
+          closing_stock: item.quantity,
+        });
+        await stockHistory.save();
       }
     }
 
-    // Update supply's last modified time
     supply.updated_at = new Date();
     await supply.save();
 
+    // Return full list of supply items with populated item and creator info
+    const populatedItems = await SupplyItem.find({ supply_id: supply._id })
+      .populate({
+        path: "item_id",
+        select: "name category unit",
+        populate: [
+          { path: "category", select: "name" },
+          { path: "unit", select: "name abbreviation" },
+        ],
+      })
+      .populate("created_by", "name username email")
+      .sort({ created_at: 1 });
+
     const result = {
       ...supply.toObject(),
-      items: supplyItems,
+      items: populatedItems,
     };
 
     res.status(200).json(result);
@@ -424,16 +469,16 @@ exports.getSupplies = async (req, res) => {
     // For each supply, get its items
     const suppliesWithItems = await Promise.all(
       supplies.map(async (supply) => {
-        const items = await SupplyItem.find({ supply_id: supply._id }).populate(
-          {
+        const items = await SupplyItem.find({ supply_id: supply._id })
+          .populate({
             path: "item_id",
             select: "name category unit",
             populate: [
               { path: "category", select: "name" },
               { path: "unit", select: "name abbreviation" },
             ],
-          }
-        );
+          })
+          .populate("created_by", "name username");
 
         return {
           ...supply.toObject(),
@@ -474,14 +519,16 @@ exports.getSupplyById = async (req, res) => {
     }
 
     // Get supply items
-    const items = await SupplyItem.find({ supply_id: supply._id }).populate({
-      path: "item_id",
-      select: "name category unit",
-      populate: [
-        { path: "category", select: "name" },
-        { path: "unit", select: "name abbreviation" },
-      ],
-    });
+    const items = await SupplyItem.find({ supply_id: supply._id })
+      .populate({
+        path: "item_id",
+        select: "name category unit",
+        populate: [
+          { path: "category", select: "name" },
+          { path: "unit", select: "name abbreviation" },
+        ],
+      })
+      .populate("created_by", "name username");
 
     const result = {
       ...supply.toObject(),
@@ -517,16 +564,16 @@ exports.getSuppliesFromCanteen = async (req, res) => {
     // For each supply, get its items
     const suppliesWithItems = await Promise.all(
       supplies.map(async (supply) => {
-        const items = await SupplyItem.find({ supply_id: supply._id }).populate(
-          {
+        const items = await SupplyItem.find({ supply_id: supply._id })
+          .populate({
             path: "item_id",
             select: "name category unit",
             populate: [
               { path: "category", select: "name" },
               { path: "unit", select: "name abbreviation" },
             ],
-          }
-        );
+          })
+          .populate("created_by", "name username");
 
         return {
           ...supply.toObject(),
@@ -564,16 +611,16 @@ exports.getSuppliesToCanteen = async (req, res) => {
     // For each supply, get its items
     const suppliesWithItems = await Promise.all(
       supplies.map(async (supply) => {
-        const items = await SupplyItem.find({ supply_id: supply._id }).populate(
-          {
+        const items = await SupplyItem.find({ supply_id: supply._id })
+          .populate({
             path: "item_id",
             select: "name category unit",
             populate: [
               { path: "category", select: "name" },
               { path: "unit", select: "name abbreviation" },
             ],
-          }
-        );
+          })
+          .populate("created_by", "name username");
 
         return {
           ...supply.toObject(),

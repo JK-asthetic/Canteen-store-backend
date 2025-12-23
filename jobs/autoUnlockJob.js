@@ -1,36 +1,37 @@
-// Create a separate file: jobs/autoUnlockJob.js
-const cron = require('node-cron');
-const Canteen = require('../models/Canteen');
+// jobs/autoUnlockJob.js
+const cron = require("node-cron");
+const Canteen = require("../models/Canteen");
 
-// Run every day at midnight (00:00)
-const autoUnlockJob = cron.schedule('0 0 * * *', async () => {
-  try {
-    console.log('Running daily auto-unlock job...');
-    
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
-    const result = await Canteen.updateMany(
-      {
-        is_locked: true,
-        locked_at: { $lt: startOfToday }
-      },
-      {
-        $set: {
-          is_locked: false,
-          locked_at: null,
-          locked_by: null,
-          lock_reason: null
+// Run every day at 2 AM (02:00)
+const autoUnlockJob = cron.schedule(
+  "0 2 * * *",
+  async () => {
+    try {
+      const result = await Canteen.updateMany(
+        {
+          is_locked: true,
+        },
+        {
+          $set: {
+            is_locked: false,
+            locked_at: null,
+            locked_by: null,
+            lock_reason: null,
+          },
         }
-      }
-    );
+      );
 
-    console.log(`Auto-unlock completed: ${result.modifiedCount} canteens unlocked`);
-  } catch (error) {
-    console.error('Error in auto-unlock job:', error);
+      console.log(
+        `Auto-unlock completed: ${result.modifiedCount} canteens unlocked`
+      );
+    } catch (error) {
+      console.error("Error in auto-unlock job:", error);
+    }
+  },
+  {
+    scheduled: false, // Don't start automatically, we'll call .start() manually
+    timezone: "Asia/Kolkata",
   }
-}, {
-  timezone: "Asia/Kolkata" // Adjust timezone as needed
-});
+);
 
 module.exports = autoUnlockJob;

@@ -90,15 +90,21 @@ exports.createSupply = async (req, res) => {
     const supplyItems = [];
     for (const item of items) {
       const itemIdStr = item.item_id.toString();
-      const currentTotal = todayTotalsMap[itemIdStr] || 0;
 
-      // Validate negative quantity
+      // Validate negative quantity against ACTUAL STOCK
       if (item.quantity < 0) {
-        if (currentTotal + item.quantity < 0) {
+        const currentStock = await Stock.findOne({
+          canteen_id: to_canteen_id, // or supply.to_canteen_id for updateSupply
+          item_id: item.item_id,
+        });
+
+        const availableStock = currentStock ? currentStock.quantity : 0;
+
+        if (availableStock + item.quantity < 0) {
           return res.status(400).json({
-            error: `Cannot reduce quantity below zero for item ${itemIdStr}. Current total: ${currentTotal}, Attempting to reduce by: ${Math.abs(
+            error: `Insufficient stock for this item. Available stock: ${availableStock}, Attempting to reduce by: ${Math.abs(
               item.quantity
-            )}`,
+            )}. This would result in negative stock.`,
           });
         }
       }
@@ -231,15 +237,21 @@ exports.updateSupply = async (req, res) => {
     const supplyItems = [];
     for (const item of items) {
       const itemIdStr = item.item_id.toString();
-      const currentTotal = todayTotalsMap[itemIdStr] || 0;
 
-      // Validate negative quantity
+      // Validate negative quantity against ACTUAL STOCK
       if (item.quantity < 0) {
-        if (currentTotal + item.quantity < 0) {
+        const currentStock = await Stock.findOne({
+          canteen_id: supply.to_canteen_id, // or supply.to_canteen_id for updateSupply
+          item_id: item.item_id,
+        });
+
+        const availableStock = currentStock ? currentStock.quantity : 0;
+
+        if (availableStock + item.quantity < 0) {
           return res.status(400).json({
-            error: `Cannot reduce quantity below zero for item ${itemIdStr}. Current total: ${currentTotal}, Attempting to reduce by: ${Math.abs(
+            error: `Insufficient stock for this item. Available stock: ${availableStock}, Attempting to reduce by: ${Math.abs(
               item.quantity
-            )}`,
+            )}. This would result in negative stock.`,
           });
         }
       }

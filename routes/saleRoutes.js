@@ -16,8 +16,13 @@ router.get(
 );
 router.get("/sales/:id", authMiddleware, saleController.getSaleById);
 
-// NEW: Verification route - Must come before general routes
+// NEW: Verification routes - Must come before general routes
 router.post("/sales/:saleId/verify", authMiddleware, saleController.verifySale);
+router.put(
+  "/sales/:saleId/verify",
+  authMiddleware,
+  saleController.updateVerifySale
+);
 
 router.post("/sales", authMiddleware, saleController.createSale);
 router.put("/sales/:saleId", authMiddleware, saleController.updateSale);

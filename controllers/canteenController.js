@@ -48,7 +48,7 @@ exports.getCanteenById = async (req, res) => {
     }
 
     // Auto-unlock if needed
-    await canteen.autoUnlockIfNeeded();
+    // await canteen.autoUnlockIfNeeded();
 
     res.json(canteen);
   } catch (err) {
@@ -90,31 +90,56 @@ exports.deleteCanteen = async (req, res) => {
 };
 
 // Lock canteen
+// Lock canteen - MODIFIED to handle verification parameter
 exports.lockCanteen = async (req, res) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
-    const adminId = req.user.id; // Assuming admin ID is available in req.user from auth middleware
+    const { reason, is_verification } = req.body;
+    const userId = req.user.id;
 
     const canteen = await Canteen.findById(id);
     if (!canteen) {
       return res.status(404).json({ error: "Canteen not found" });
     }
 
-    if (canteen.is_locked) {
-      return res.status(400).json({ error: "Canteen is already locked" });
+    // If it's a verification action
+    if (is_verification) {
+      // Keep existing lock_reason if already locked, append verification info
+      const verificationText = `Verified by ${
+        req.user.name || req.user.username
+      }`;
+
+      if (canteen.is_locked && canteen.lock_reason) {
+        // Already locked - append verification info
+        canteen.lock_reason = `${canteen.lock_reason} | ${verificationText}`;
+      } else {
+        // Not locked yet - just set verification
+        canteen.is_locked = true;
+        canteen.locked_at = new Date();
+        canteen.locked_by = userId;
+        canteen.lock_reason = verificationText;
+      }
+    } else {
+      // Manual lock
+      if (canteen.is_locked) {
+        return res.status(400).json({ error: "Canteen is already locked" });
+      }
+
+      canteen.is_locked = true;
+      canteen.locked_at = new Date();
+      canteen.locked_by = userId;
+      canteen.lock_reason = `Locked by ${req.user.username}${
+        reason ? `: ${reason}` : ""
+      }`;
     }
 
-    canteen.is_locked = true;
-    canteen.locked_at = new Date();
-    canteen.locked_by = adminId;
-    canteen.lock_reason = reason || "Locked by admin";
-
     await canteen.save();
-    await canteen.populate("locked_by", "name email");
+    await canteen.populate("locked_by", "name email username");
 
     res.json({
-      message: "Canteen locked successfully",
+      message: is_verification
+        ? "Canteen verified and locked successfully"
+        : "Canteen locked successfully",
       canteen,
     });
   } catch (err) {
@@ -122,8 +147,7 @@ exports.lockCanteen = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-// Unlock canteen
+// Unlock canteen - Clear all lock information
 exports.unlockCanteen = async (req, res) => {
   try {
     const { id } = req.params;
@@ -137,6 +161,7 @@ exports.unlockCanteen = async (req, res) => {
       return res.status(400).json({ error: "Canteen is not locked" });
     }
 
+    // Clear all lock and verification information
     canteen.is_locked = false;
     canteen.locked_at = null;
     canteen.locked_by = null;
@@ -153,7 +178,6 @@ exports.unlockCanteen = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 // Get locked canteens
 exports.getLockedCanteens = async (req, res) => {
   try {

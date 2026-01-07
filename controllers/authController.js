@@ -30,7 +30,7 @@ exports.login = async (req, res) => {
       const canteen = user.canteen_id;
 
       // Auto-unlock if needed (checks if it's a new day)
-      await canteen.autoUnlockIfNeeded();
+      // await canteen.autoUnlockIfNeeded();
 
       // Check if canteen is locked
       // if (canteen.is_locked) {

@@ -29,6 +29,8 @@ exports.createSale = async (req, res) => {
       online_amount,
       other_amount,
       description,
+      previous_day_adjustment: frontendAdjustment, // ✅ Accept from frontend
+      previous_day_reason: frontendReason, // ✅ Accept from frontend
     } = req.body;
 
     // Validate if current user belongs to this canteen (for managers)
@@ -57,23 +59,30 @@ exports.createSale = async (req, res) => {
       },
     });
 
-    // Get yesterday's sale to check for adjustments
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdaySale = await Sale.findOne({
-      canteen_id,
-      date: {
-        $gte: yesterday,
-        $lt: today,
-      },
-    });
-
-    // Get previous day adjustment from yesterday's sale
+    // ✅ Use frontend adjustment if provided, otherwise check for yesterday's sale
     let previous_day_adjustment = 0;
     let previous_day_reason = "";
-    if (yesterdaySale && yesterdaySale.next_day_adjustment) {
-      previous_day_adjustment = yesterdaySale.next_day_adjustment;
-      previous_day_reason = yesterdaySale.next_day_reason || "";
+
+    if (frontendAdjustment !== undefined && frontendAdjustment !== null) {
+      // Use adjustment from frontend (for new sales created via mobile app)
+      previous_day_adjustment = frontendAdjustment;
+      previous_day_reason = frontendReason || "";
+    } else {
+      // Fallback: Get yesterday's sale to check for adjustments
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdaySale = await Sale.findOne({
+        canteen_id,
+        date: {
+          $gte: yesterday,
+          $lt: today,
+        },
+      });
+
+      if (yesterdaySale && yesterdaySale.next_day_adjustment) {
+        previous_day_adjustment = yesterdaySale.next_day_adjustment;
+        previous_day_reason = yesterdaySale.next_day_reason || "";
+      }
     }
 
     // Calculate total amount from items
@@ -102,17 +111,14 @@ exports.createSale = async (req, res) => {
 
     const saleItems = [];
     if (sale) {
-      // Update existing sale
+      // ✅ Update existing sale - always use the calculated adjustment
       sale.total_amount = total_amount;
       sale.cash_amount = cash_amount || 0;
       sale.online_amount = online_amount || 0;
       sale.other_amount = other_amount || 0;
       sale.description = description || sale.description;
-      // Keep previous_day_adjustment unchanged if it exists
-      if (!sale.previous_day_adjustment) {
-        sale.previous_day_adjustment = previous_day_adjustment;
-        sale.previous_day_reason = previous_day_reason;
-      }
+      sale.previous_day_adjustment = previous_day_adjustment; // ✅ Always update
+      sale.previous_day_reason = previous_day_reason; // ✅ Always update
       sale.updated_at = new Date();
     } else {
       // Create new sale
@@ -283,9 +289,7 @@ exports.verifySale = async (req, res) => {
         is_locked: true,
         locked_at: new Date(),
         locked_by: req.user._id,
-        lock_reason: `Sale verified for ${
-          sale.date.toISOString().split("T")[0]
-        }`,
+        lock_reason: `Sale verified By ${req.user.username}`,
       },
     });
 
@@ -297,6 +301,83 @@ exports.verifySale = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("Error verifying sale:", err);
+    return sendError(res, 500, err);
+  }
+};
+
+// New: Update verification for today's sale (or update existing verification) - only admins
+exports.updateVerifySale = async (req, res) => {
+  try {
+    const { saleId } = req.params;
+    const { adjustment_amount, reason } = req.body;
+
+    // Only admin can update verification
+    if (req.user.role !== "admin" && req.user.role !== "super_admin") {
+      return res
+        .status(403)
+        .json({ error: "Only admins can update verification" });
+    }
+
+    const sale = await Sale.findById(saleId);
+    if (!sale) {
+      return res.status(404).json({ error: "Sale not found" });
+    }
+
+    // Validate that sale date is today (adjusted for 2 AM boundary)
+    const now = new Date();
+    const twoHoursShift = 2 * 60 * 60 * 1000;
+    const adjustedTime = new Date(now.getTime() - twoHoursShift);
+    const today = new Date(adjustedTime);
+    today.setHours(0, 0, 0, 0);
+    const saleDate = new Date(sale.date);
+    saleDate.setHours(0, 0, 0, 0);
+
+    if (saleDate.getTime() !== today.getTime()) {
+      return res
+        .status(403)
+        .json({ error: "You can only update verification for today's sale" });
+    }
+
+    // Validate adjustment amount
+    if (typeof adjustment_amount !== "number") {
+      return res
+        .status(400)
+        .json({ error: "Adjustment amount must be a number" });
+    }
+
+    if (!reason || reason.trim() === "") {
+      return res
+        .status(400)
+        .json({ error: "Reason is required for verification" });
+    }
+
+    // Update verification fields
+    sale.next_day_adjustment = adjustment_amount;
+    sale.next_day_reason = reason.trim();
+    sale.verified_by = req.user._id;
+    sale.verified_at = new Date();
+
+    await sale.save();
+
+    // Lock the canteen after verification update
+    const Canteen = require("../models/Canteen");
+    await Canteen.findByIdAndUpdate(sale.canteen_id, {
+      $set: {
+        is_locked: true,
+        locked_at: new Date(),
+        locked_by: req.user._id,
+        lock_reason: `Sale verified By ${req.user.username}`,
+      },
+    });
+
+    const result = await Sale.findById(saleId)
+      .populate("canteen_id", "name location")
+      .populate("created_by", "name username")
+      .populate("verified_by", "name username");
+
+    res.json(result);
+  } catch (err) {
+    console.error("Error updating sale verification:", err);
     return sendError(res, 500, err);
   }
 };

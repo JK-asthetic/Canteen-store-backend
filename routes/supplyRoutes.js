@@ -11,5 +11,5 @@ router.put('/supplies/:id', authMiddleware, supplyController.updateSupply);
 router.delete('/supplies/:supplyId/items/:itemId', authMiddleware, supplyController.removeSupplyItem);
 router.get('/supplies/from/:canteenId', authMiddleware, supplyController.getSuppliesFromCanteen);
 router.get('/supplies/to/:canteenId', authMiddleware, supplyController.getSuppliesToCanteen);
-
+router.get('/supplies/canteen/:canteen_id/item/:item_id/month', authMiddleware, supplyController.getSuppliesByItemAndMonth);
 module.exports = router;

@@ -694,3 +694,72 @@ async function updateStockHistory(
 
   return stockHistory;
 }
+exports.getSuppliesByItemAndMonth = async (req, res) => {
+  try {
+    const { canteen_id, item_id } = req.params;
+    const { year, month } = req.query;
+
+    console.log("Request params:", { canteen_id, item_id, year, month });
+
+    // Default to current month if not specified
+    const targetYear = year ? parseInt(year) : new Date().getFullYear();
+    const targetMonth = month ? parseInt(month) - 1 : new Date().getMonth();
+
+    // Calculate start and end dates for the month
+    const startDate = new Date(targetYear, targetMonth, 1);
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(targetYear, targetMonth + 1, 0);
+    endDate.setHours(23, 59, 59, 999);
+
+    // Step 1: Find all supply_ids that have this item
+    const supplyItemsWithItem = await SupplyItem.find({
+      item_id: item_id,
+    }).distinct("supply_id");
+
+    // Step 2: Find supplies in date range that match those supply_ids
+    const supplies = await Supply.find({
+      _id: { $in: supplyItemsWithItem },
+      to_canteen_id: canteen_id,
+      date: { $gte: startDate, $lte: endDate },
+    })
+      .populate("from_canteen_id", "name location")
+      .populate("to_canteen_id", "name location")
+      .sort({ date: -1 });
+
+    // Step 3: For each supply, get only the items for this specific item_id
+    const suppliesWithItems = await Promise.all(
+      supplies.map(async (supply) => {
+        const items = await SupplyItem.find({
+          supply_id: supply._id,
+          item_id: item_id,
+        })
+          .populate({
+            path: "item_id",
+            select: "name description mrp category unit",
+            populate: [
+              { path: "category", select: "name" },
+              { path: "unit", select: "name abbreviation" },
+            ],
+          })
+          .populate("created_by", "name username");
+
+        // Calculate total_price for each item if not stored
+        const itemsWithTotal = items.map((item) => ({
+          ...item.toObject(),
+          total_price: item.quantity * item.unit_price,
+        }));
+
+        return {
+          ...supply.toObject(),
+          items: itemsWithTotal,
+        };
+      })
+    );
+
+    res.json(suppliesWithItems);
+  } catch (err) {
+    console.error("Error fetching supplies by item:", err);
+    res.status(500).json({ error: err.message });
+  }
+};

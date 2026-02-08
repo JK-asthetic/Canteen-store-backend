@@ -13,8 +13,9 @@ dotenv.config();
 // Import routes
 const routes = require("./routes");
 
-// Import auto-unlock job
+// Import jobs
 const autoUnlockJob = require("./jobs/autoUnlockJob");
+const { initializeBackupScheduler } = require("./services/backupScheduler");
 
 const app = express();
 
@@ -57,15 +58,18 @@ mongoose
   .then(() => {
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      console.log(`✅ Server running on port ${PORT}`);
 
       // Start the auto-unlock cron job
       autoUnlockJob.start();
-      console.log("Auto-unlock cron job started - runs daily at 2:00 AM IST");
+      console.log("✅ Auto-unlock cron job started - runs daily at 2:00 AM IST");
+
+      // Start the backup email scheduler
+      initializeBackupScheduler();
     });
   })
   .catch((err) => {
-    console.error("MongoDB connection error:", err);
+    console.error("❌ MongoDB connection error:", err);
     process.exit(1);
   });
 

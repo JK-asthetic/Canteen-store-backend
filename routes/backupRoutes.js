@@ -4,11 +4,33 @@ const router = express.Router();
 const mongoose = require("mongoose");
 const multer = require("multer");
 const { ObjectId } = mongoose.Types;
+const { sendBackupEmail } = require("../services/backupScheduler");
 
 // Configure multer for file uploads (memory storage)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
+});
+
+/**
+ * POST /canteen_store/backup/email
+ * Manually trigger backup email
+ */
+router.post("/backup/email", async (req, res) => {
+  try {
+    await sendBackupEmail();
+    res.json({
+      success: true,
+      message: "Backup email sent successfully",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Manual backup email error:", error);
+    res.status(500).json({
+      error: "Failed to send backup email",
+      message: error.message,
+    });
+  }
 });
 
 /**

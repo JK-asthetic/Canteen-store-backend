@@ -4,8 +4,8 @@ const router = express.Router();
 
 // Version configuration - UPDATE THESE VALUES AS NEEDED
 const VERSION_CONFIG = {
-  currentVersion: "4.0.0", // Latest available version
-  minVersion: "2.0.0", // Minimum required version to use the app
+  currentVersion: "5.0.3", // Latest available version
+  minVersion: "5.0.0", // Minimum required version to use the app
   forceUpdate: false, // Set to true to force all users to update
   message: "A new version is available with bug fixes and improvements.",
 };

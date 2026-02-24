@@ -32,6 +32,14 @@ const stockHistorySchema = new Schema({
     type: Number,
     required: true
   },
+  adjusted_stock: {
+    type: Number,
+    default: 0
+  },
+  adjustment_description: {
+    type: String,
+    default: ''
+  },
   created_at: {
     type: Date,
     default: Date.now

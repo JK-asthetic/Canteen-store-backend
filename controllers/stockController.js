@@ -5,13 +5,14 @@ const StockHistory = require("../models/StockHistory");
 
 exports.updateStock = async (req, res) => {
   try {
-    const { canteen_id, item_id, quantity } = req.body;
+    const { canteen_id, item_id, quantity, description } = req.body;
 
     // Find the current stock or create a new one
     let stock = await Stock.findOne({ canteen_id, item_id });
 
     // Get the old quantity for stock history
     const oldQuantity = stock ? stock.quantity : 0;
+    const adjustedAmount = quantity - oldQuantity;
 
     if (!stock) {
       // Create new stock if it doesn't exist
@@ -42,6 +43,8 @@ exports.updateStock = async (req, res) => {
         date,
         opening_stock: oldQuantity,
         closing_stock: quantity,
+        adjusted_stock: adjustedAmount,
+        adjustment_description: description || '',
       });
 
       // Calculate received/sold based on whether quantity increased or decreased
@@ -58,6 +61,12 @@ exports.updateStock = async (req, res) => {
         stockHistory.sold_stock += stockHistory.closing_stock - quantity;
       }
       stockHistory.closing_stock = quantity;
+      stockHistory.adjusted_stock = (stockHistory.adjusted_stock || 0) + adjustedAmount;
+      if (description) {
+        stockHistory.adjustment_description = stockHistory.adjustment_description
+          ? `${stockHistory.adjustment_description}; ${description}`
+          : description;
+      }
     }
 
     await stockHistory.save();
@@ -118,12 +127,20 @@ exports.getStockHistory = async (req, res) => {
       startDate.setHours(0, 0, 0, 0);
     }
 
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + days);
+    let endDate;
+    if (req.query.date) {
+      // Specific date: show just that day
+      endDate = new Date(startDate);
+      endDate.setHours(23, 59, 59, 999);
+    } else {
+      // Last N days: end date is today end-of-day
+      endDate = new Date();
+      endDate.setHours(23, 59, 59, 999);
+    }
 
     const filter = {
       canteen_id,
-      date: { $gte: startDate, $lt: endDate },
+      date: { $gte: startDate, $lte: endDate },
     };
     if (item_id) filter.item_id = item_id;
 

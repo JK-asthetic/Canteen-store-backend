@@ -461,4 +461,82 @@ router.delete("/backup/clear", async (req, res) => {
   }
 });
 
+/**
+ * DELETE /canteen_store/backup/purge-old-data
+ * Delete sales, supply, and stock-history data from the beginning up to a specified date.
+ * Preserves Items, Users, Canteens, Stock (current), Categories, and Units.
+ */
+router.delete("/backup/purge-old-data", async (req, res) => {
+  try {
+    const { endDate, confirmToken } = req.body;
+
+    // Require confirmation token
+    if (confirmToken !== "CONFIRM_PURGE_OLD_DATA") {
+      return res.status(400).json({
+        error: "Invalid confirmation token",
+        required: "CONFIRM_PURGE_OLD_DATA",
+        message: "Please provide the confirmation token in the request body",
+      });
+    }
+
+    if (!endDate) {
+      return res.status(400).json({ error: "endDate is required (YYYY-MM-DD)" });
+    }
+
+    const cutoff = new Date(endDate);
+    cutoff.setHours(23, 59, 59, 999); // Include the entire specified day
+
+    if (isNaN(cutoff.getTime())) {
+      return res.status(400).json({ error: "Invalid date format, use YYYY-MM-DD" });
+    }
+
+    const Sale = require("../models/Sale");
+    const SaleItem = require("../models/SaleItem");
+    const Supply = require("../models/Supply");
+    const SupplyItem = require("../models/SupplyItem");
+    const StockHistory = require("../models/StockHistory");
+
+    // 1. Find Sales up to cutoff and delete their SaleItems
+    const salesToDelete = await Sale.find({ date: { $lte: cutoff } }).select("_id");
+    const saleIds = salesToDelete.map((s) => s._id);
+    const saleItemsResult = await SaleItem.deleteMany({ sale_id: { $in: saleIds } });
+    const salesResult = await Sale.deleteMany({ date: { $lte: cutoff } });
+
+    // 2. Find Supplies up to cutoff and delete their SupplyItems
+    const suppliesToDelete = await Supply.find({ date: { $lte: cutoff } }).select("_id");
+    const supplyIds = suppliesToDelete.map((s) => s._id);
+    const supplyItemsResult = await SupplyItem.deleteMany({ supply_id: { $in: supplyIds } });
+    const suppliesResult = await Supply.deleteMany({ date: { $lte: cutoff } });
+
+    // 3. Delete StockHistory up to cutoff
+    const stockHistoryResult = await StockHistory.deleteMany({ date: { $lte: cutoff } });
+
+    const summary = {
+      sales: salesResult.deletedCount,
+      saleItems: saleItemsResult.deletedCount,
+      supplies: suppliesResult.deletedCount,
+      supplyItems: supplyItemsResult.deletedCount,
+      stockHistory: stockHistoryResult.deletedCount,
+    };
+
+    const totalDeleted = Object.values(summary).reduce((a, b) => a + b, 0);
+
+    console.log(`Purged old data up to ${endDate}:`, summary);
+
+    res.json({
+      success: true,
+      message: `Successfully purged data up to ${endDate}`,
+      cutoffDate: cutoff.toISOString(),
+      summary,
+      totalDeleted,
+    });
+  } catch (error) {
+    console.error("Purge old data error:", error);
+    res.status(500).json({
+      error: "Failed to purge old data",
+      message: error.message,
+    });
+  }
+});
+
 module.exports = router;

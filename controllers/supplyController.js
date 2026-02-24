@@ -697,20 +697,33 @@ async function updateStockHistory(
 exports.getSuppliesByItemAndMonth = async (req, res) => {
   try {
     const { canteen_id, item_id } = req.params;
-    const { year, month } = req.query;
+    const { year, month, days } = req.query;
 
-    console.log("Request params:", { canteen_id, item_id, year, month });
+    console.log("Request params:", { canteen_id, item_id, year, month, days });
 
-    // Default to current month if not specified
-    const targetYear = year ? parseInt(year) : new Date().getFullYear();
-    const targetMonth = month ? parseInt(month) - 1 : new Date().getMonth();
+    let startDate, endDate;
 
-    // Calculate start and end dates for the month
-    const startDate = new Date(targetYear, targetMonth, 1);
-    startDate.setHours(0, 0, 0, 0);
+    if (days) {
+      // Use last N days from today
+      const numDays = parseInt(days);
+      endDate = new Date();
+      endDate.setHours(23, 59, 59, 999);
 
-    const endDate = new Date(targetYear, targetMonth + 1, 0);
-    endDate.setHours(23, 59, 59, 999);
+      startDate = new Date();
+      startDate.setDate(startDate.getDate() - numDays);
+      startDate.setHours(0, 0, 0, 0);
+    } else {
+      // Default to current month if not specified
+      const targetYear = year ? parseInt(year) : new Date().getFullYear();
+      const targetMonth = month ? parseInt(month) - 1 : new Date().getMonth();
+
+      // Calculate start and end dates for the month
+      startDate = new Date(targetYear, targetMonth, 1);
+      startDate.setHours(0, 0, 0, 0);
+
+      endDate = new Date(targetYear, targetMonth + 1, 0);
+      endDate.setHours(23, 59, 59, 999);
+    }
 
     // Step 1: Find all supply_ids that have this item
     const supplyItemsWithItem = await SupplyItem.find({

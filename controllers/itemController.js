@@ -19,7 +19,7 @@ exports.getItems = async (req, res) => {
     if (req.query.category) filter.category = req.query.category;
     if (req.query.is_active !== undefined) filter.is_active = req.query.is_active === 'true';
 
-    const items = await Item.find(filter);
+    const items = await Item.find(filter).populate('unit', 'name abbreviation');
     res.json(items);
   } catch (err) {
     console.error('Error fetching items:', err);
